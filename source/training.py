@@ -3,7 +3,7 @@ import os
 import logging
 from tqdm import tqdm
 from sklearn.metrics import f1_score
-from source.losses import GCODLoss
+from source.losses import GCODLoss_C, GCODLoss_D
 
 
 def train_epoch_gcod(data_loader, model, optimizer, criterion, device, u_values_global, args):
@@ -126,7 +126,7 @@ def evaluate_epoch(data_loader, model, criterion, device, calculate_accuracy=Fal
                 true_labels.extend(data.y.cpu().numpy())
 
                 # Loss calculation
-                if is_gcod and isinstance(criterion, GCODLoss):
+                if is_gcod and isinstance(criterion, (GCODLoss_C, GCODLoss_D)):
                     # For GCOD evaluation, use L1 with u=0 as proxy
                     u_eval_dummy = torch.zeros(data.y.size(0), device=device, dtype=torch.float)
                     loss_value = criterion.compute_L1(output, data.y, u_eval_dummy)
