@@ -143,10 +143,9 @@ def split_dataset_indices(dataset, val_split=0.2, seed=777):
 
 
 def create_subset_loader(dataset, indices, batch_size, shuffle=False):
-    """Create DataLoader for a subset of the dataset with performance optimizations"""
+    """Create DataLoader for a subset of the dataset - Kaggle optimized"""
     subset = torch.utils.data.Subset(dataset, indices)
-    return DataLoader(subset, batch_size=batch_size, shuffle=shuffle,
-                     num_workers=2, persistent_workers=True, pin_memory=True)
+    return DataLoader(subset, batch_size=batch_size, shuffle=shuffle, pin_memory=True)
 
 
 def main(args):
