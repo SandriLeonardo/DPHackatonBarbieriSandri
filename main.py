@@ -70,7 +70,7 @@ def get_model_defaults(model_type):
             'loss_type': 'gce',
             'best_metric': 'f1'
         }
-    elif model_type == "gcod_model":
+    elif model_type == "gcod_model_C":
         return {
             'num_layer': 3,
             'emb_dim': 218,
@@ -79,18 +79,52 @@ def get_model_defaults(model_type):
             'residual': True,
             'JK': 'last',
             'graph_pooling': 'mean',
-            'edge_drop_ratio': 0.1,
+            'edge_drop_ratio': 0.3,
             'batch_norm': True,
             'batch_size': 64,
             'epochs': 250,
-            'learning_rate': 5e-3,
+            'initial_lr' : 5e-3,
+            'early_stopping': True,  # Enable/disable early stopping
             'patience': 25,
-            'scheduler': 'plateau',
-            'loss_type': 'gcod',
-            'gcod_lambda_p': 2.0,
-            'gcod_lambda_r': 0.1,
-            'gcod_T_u': 15,
-            'gcod_lr_u': 0.1,
+            'gcod_lambda_p': 5.0,    # Weight for prediction penalty in GCOD
+            'gcod_lambda_r': 0.5,    # Weight for u regularization in GCOD
+            'gcod_T_u': 15,           # Number of optimization iterations for u in GCOD
+            'gcod_lr_u': 0.1,       # Learning rate for optimizing u in GCOD
+            'use_scheduler' : True,
+            'scheduler_type': 'plateau',  # Options: 'StepLR', 'ReduceLROnPlateau', 'CosineAnnealingLR', 'ExponentialLR', 'OneCycleLR'
+            'step_size': 30,      # Period of learning rate decay for StepLR
+            'gamma': 0.5,         # Multiplicative factor of learning rate decay
+            'patience_lr': 10,    # Number of epochs with no improvement after which LR will be reduced
+            'factor': 0.5,        # Factor by which the learning rate will be reduced
+            'min_lr': 1e-7,
+            'best_metric': 'accuracy'
+        }
+    elif model_type == "gcod_model_D":
+        return {
+            'num_layer': 3,
+            'emb_dim': 218,
+            'drop_ratio': 0.7,
+            'virtual_node': True,
+            'residual': True,
+            'JK': 'last',
+            'graph_pooling': 'mean',
+            'edge_drop_ratio': 0.3,
+            'batch_norm': True,
+            'batch_size': 64,
+            'epochs': 250,
+            'initial_lr' : 5e-3,
+            'early_stopping': True,  # Enable/disable early stopping
+            'patience': 25,
+            'gcod_lambda_p': 2.0,    # Weight for prediction penalty in GCOD
+            'gcod_T_u': 15,           # Number of optimization iterations for u in GCOD
+            'gcod_lr_u': 0.1,       # Learning rate for optimizing u in GCOD
+            'use_scheduler' : True,
+            'scheduler_type': 'plateau',  # Options: 'StepLR', 'ReduceLROnPlateau', 'CosineAnnealingLR', 'ExponentialLR', 'OneCycleLR'
+            'step_size': 30,      # Period of learning rate decay for StepLR
+            'gamma': 0.5,         # Multiplicative factor of learning rate decay
+            'patience_lr': 10,    # Number of epochs with no improvement after which LR will be reduced
+            'factor': 0.5,        # Factor by which the learning rate will be reduced
+            'min_lr': 1e-7,
             'best_metric': 'accuracy'
         }
     else:
@@ -182,9 +216,11 @@ def main(args):
         loss_kwargs['q'] = args.gce_q
     elif args.loss_type == "noisy":
         loss_kwargs['p_noisy'] = getattr(args, 'noise_prob', 0.2)
-    elif args.loss_type == "gcod":
+    elif args.loss_type == "gcod_c":
+        loss_kwargs['alpha_train'] = getattr(args, 'gcod_lambda_p', 5.0)
+        loss_kwargs['lambda_r'] = getattr(args, 'gcod_lambda_r', 0.5)
+    elif args.loss_type == "gcod_d":
         loss_kwargs['alpha_train'] = getattr(args, 'gcod_lambda_p', 2.0)
-        loss_kwargs['lambda_r'] = getattr(args, 'gcod_lambda_r', 0.1)
 
     criterion = get_loss_function(args.loss_type, **loss_kwargs)
 
@@ -206,7 +242,7 @@ def main(args):
             print(f"Dataset split: {len(train_indices)} training, {len(val_indices)} validation samples")
 
             # Add original indices if using GCOD (must be done before creating subsets)
-            if args.loss_type == "gcod":
+            if args.loss_type == "gcod_c" or args.loss_type == "gcod_d":
                 full_train_dataset = add_original_indices(full_train_dataset)
 
             # Create train and validation loaders
@@ -240,7 +276,7 @@ def main(args):
 
             # Prepare GCOD arguments if needed
             gcod_args = None
-            if args.loss_type == "gcod":
+            if args.loss_type == "gcod_c" or args.loss_type == "gcod_d":
                 gcod_args = argparse.Namespace(
                     gcod_T_u=getattr(args, 'gcod_T_u', 15),
                     gcod_lr_u=getattr(args, 'gcod_lr_u', 0.1)
@@ -312,12 +348,12 @@ if __name__ == "__main__":
 
     # Model selection with defaults
     parser.add_argument("--model_type", type=str, default="gce_model",
-                        choices=["gce_model", "gcod_model"],
+                        choices=["gce_model", "gcod_model_C", "gcod_model_D"],
                         help="Model configuration: 'gce_model' (default) or 'gcod_model'")
 
     # Loss function override (optional)
     parser.add_argument("--loss_type", type=str, default=None,
-                        choices=["gce", "gcod", "standard", "noisy"],
+                        choices=["gce", "gcod_c", "gcod_d", "standard", "noisy"],
                         help="Override loss function (uses model_type default if not specified)")
 
     # Model architecture parameters
@@ -355,7 +391,7 @@ if __name__ == "__main__":
     parser.add_argument("--gce_q", type=float, default=0.9)
     parser.add_argument("--noise_prob", type=float, default=0.2)
     parser.add_argument("--gcod_lambda_p", type=float, default=2.0)
-    parser.add_argument("--gcod_lambda_r", type=float, default=0.1)
+    parser.add_argument("--gcod_lambda_r", type=float, default=0.5)
     parser.add_argument("--gcod_T_u", type=int, default=15)
     parser.add_argument("--gcod_lr_u", type=float, default=0.1)
 
