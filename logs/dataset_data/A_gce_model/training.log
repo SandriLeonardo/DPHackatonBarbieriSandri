@@ -1,0 +1,58 @@
+2025-05-30 19:39:12,524 - Starting training with model_type: gce_model
+2025-05-30 19:39:12,524 - Test path: data/A/test.json.gz
+2025-05-30 19:39:12,524 - Train path: data/A/train.json.gz
+2025-05-30 19:39:44,074 - Starting training with model_type: gce_model
+2025-05-30 19:39:44,074 - Test path: data/A/test.json.gz
+2025-05-30 19:39:44,075 - Train path: data/A/train.json.gz
+2025-05-30 19:42:54,713 - Epoch 1: Train Loss=0.7420, Train Acc=0.3364, Val Loss=0.7270, Val Acc=0.3502, Val F1=0.1629, LR=5.00e-03
+2025-05-30 19:44:05,701 - Epoch 2: Train Loss=0.6912, Train Acc=0.3790, Val Loss=0.6766, Val Acc=0.3910, Val F1=0.1974, LR=5.00e-03
+2025-05-30 19:45:16,752 - Epoch 3: Train Loss=0.6852, Train Acc=0.3816, Val Loss=0.6573, Val Acc=0.4069, Val F1=0.2206, LR=5.00e-03
+2025-05-30 19:46:07,628 - Epoch 4: Train Loss=0.6644, Train Acc=0.4012, Val Loss=0.6962, Val Acc=0.3710, Val F1=0.2425, LR=5.00e-03
+2025-05-30 19:46:59,584 - Epoch 5: Train Loss=0.6357, Train Acc=0.4287, Val Loss=0.6604, Val Acc=0.4091, Val F1=0.2475, LR=5.00e-03
+2025-05-30 19:47:51,410 - Epoch 6: Train Loss=0.6185, Train Acc=0.4433, Val Loss=0.6339, Val Acc=0.4295, Val F1=0.2675, LR=5.00e-03
+2025-05-30 19:48:44,222 - Epoch 7: Train Loss=0.6042, Train Acc=0.4579, Val Loss=0.6404, Val Acc=0.4224, Val F1=0.2657, LR=5.00e-03
+2025-05-30 19:49:38,286 - Epoch 8: Train Loss=0.5955, Train Acc=0.4627, Val Loss=0.7480, Val Acc=0.3236, Val F1=0.1956, LR=5.00e-03
+2025-05-30 19:50:31,133 - Epoch 9: Train Loss=0.5878, Train Acc=0.4717, Val Loss=0.5757, Val Acc=0.4867, Val F1=0.3356, LR=5.00e-03
+2025-05-30 19:51:26,152 - Epoch 10: Train Loss=0.5718, Train Acc=0.4855, Val Loss=0.5558, Val Acc=0.4996, Val F1=0.3425, LR=5.00e-03
+2025-05-30 19:52:20,039 - Epoch 11: Train Loss=0.5586, Train Acc=0.4982, Val Loss=0.5979, Val Acc=0.4632, Val F1=0.3475, LR=5.00e-03
+2025-05-30 19:53:13,135 - Epoch 12: Train Loss=0.5496, Train Acc=0.5058, Val Loss=0.6263, Val Acc=0.4340, Val F1=0.3043, LR=5.00e-03
+2025-05-30 19:54:06,722 - Epoch 13: Train Loss=0.5413, Train Acc=0.5132, Val Loss=0.5370, Val Acc=0.5191, Val F1=0.3642, LR=5.00e-03
+2025-05-30 19:54:59,846 - Epoch 14: Train Loss=0.5351, Train Acc=0.5174, Val Loss=0.5795, Val Acc=0.4770, Val F1=0.3339, LR=5.00e-03
+2025-05-30 19:55:53,839 - Epoch 15: Train Loss=0.5359, Train Acc=0.5155, Val Loss=0.5856, Val Acc=0.4694, Val F1=0.3141, LR=5.00e-03
+2025-05-30 19:56:46,696 - Epoch 16: Train Loss=0.5301, Train Acc=0.5223, Val Loss=0.6645, Val Acc=0.3989, Val F1=0.2689, LR=5.00e-03
+2025-05-30 19:57:39,355 - Epoch 17: Train Loss=0.5225, Train Acc=0.5298, Val Loss=0.5093, Val Acc=0.5363, Val F1=0.3793, LR=5.00e-03
+2025-05-30 19:58:29,496 - Epoch 18: Train Loss=0.5079, Train Acc=0.5423, Val Loss=0.5667, Val Acc=0.4902, Val F1=0.3593, LR=5.00e-03
+2025-05-30 19:59:20,313 - Epoch 19: Train Loss=0.5149, Train Acc=0.5362, Val Loss=0.5302, Val Acc=0.5186, Val F1=0.3687, LR=5.00e-03
+2025-05-30 20:00:13,452 - Epoch 20: Train Loss=0.5078, Train Acc=0.5410, Val Loss=0.4946, Val Acc=0.5541, Val F1=0.3978, LR=5.00e-03
+2025-05-30 20:01:06,228 - Epoch 21: Train Loss=0.5031, Train Acc=0.5473, Val Loss=0.5315, Val Acc=0.5248, Val F1=0.3742, LR=5.00e-03
+2025-05-30 20:01:58,665 - Epoch 22: Train Loss=0.5030, Train Acc=0.5471, Val Loss=0.5189, Val Acc=0.5337, Val F1=0.3904, LR=5.00e-03
+2025-05-30 20:02:51,106 - Epoch 23: Train Loss=0.4987, Train Acc=0.5511, Val Loss=0.5062, Val Acc=0.5430, Val F1=0.4027, LR=5.00e-03
+2025-05-30 20:03:43,762 - Epoch 24: Train Loss=0.4990, Train Acc=0.5496, Val Loss=0.5387, Val Acc=0.5129, Val F1=0.3673, LR=5.00e-03
+2025-05-30 20:04:36,081 - Epoch 25: Train Loss=0.4924, Train Acc=0.5561, Val Loss=0.5333, Val Acc=0.5208, Val F1=0.3845, LR=5.00e-03
+2025-05-30 20:05:27,966 - Epoch 26: Train Loss=0.4856, Train Acc=0.5626, Val Loss=0.5686, Val Acc=0.4898, Val F1=0.3352, LR=5.00e-03
+2025-05-30 20:06:21,231 - Epoch 27: Train Loss=0.4848, Train Acc=0.5623, Val Loss=0.4748, Val Acc=0.5700, Val F1=0.4190, LR=5.00e-03
+2025-05-30 20:07:13,730 - Epoch 28: Train Loss=0.4855, Train Acc=0.5633, Val Loss=0.4830, Val Acc=0.5616, Val F1=0.4108, LR=5.00e-03
+2025-05-30 20:08:07,238 - Epoch 29: Train Loss=0.4786, Train Acc=0.5690, Val Loss=0.4716, Val Acc=0.5758, Val F1=0.4154, LR=5.00e-03
+2025-05-30 20:09:08,809 - Epoch 30: Train Loss=0.4776, Train Acc=0.5704, Val Loss=0.5165, Val Acc=0.5332, Val F1=0.3728, LR=5.00e-03
+2025-05-30 20:10:11,752 - Epoch 31: Train Loss=0.4732, Train Acc=0.5731, Val Loss=0.4966, Val Acc=0.5527, Val F1=0.3820, LR=5.00e-03
+2025-05-30 20:11:25,218 - Epoch 32: Train Loss=0.4757, Train Acc=0.5719, Val Loss=0.4799, Val Acc=0.5656, Val F1=0.4130, LR=5.00e-03
+2025-05-30 20:12:33,865 - Epoch 33: Train Loss=0.4728, Train Acc=0.5737, Val Loss=0.6563, Val Acc=0.4096, Val F1=0.2794, LR=5.00e-03
+2025-05-30 20:13:26,014 - Epoch 34: Train Loss=0.4717, Train Acc=0.5730, Val Loss=0.5794, Val Acc=0.4814, Val F1=0.3674, LR=5.00e-03
+2025-05-30 20:14:18,809 - Epoch 35: Train Loss=0.4634, Train Acc=0.5817, Val Loss=0.5201, Val Acc=0.5306, Val F1=0.4162, LR=5.00e-03
+2025-05-30 20:15:11,256 - Epoch 36: Train Loss=0.4624, Train Acc=0.5846, Val Loss=0.5120, Val Acc=0.5363, Val F1=0.3794, LR=5.00e-03
+2025-05-30 20:16:02,133 - Epoch 37: Train Loss=0.4583, Train Acc=0.5880, Val Loss=0.5182, Val Acc=0.5301, Val F1=0.4083, LR=5.00e-03
+2025-05-30 20:16:53,081 - Epoch 38: Train Loss=0.4577, Train Acc=0.5871, Val Loss=0.4515, Val Acc=0.5926, Val F1=0.4575, LR=5.00e-03
+2025-05-30 20:17:43,317 - Epoch 39: Train Loss=0.4476, Train Acc=0.5969, Val Loss=0.4607, Val Acc=0.5785, Val F1=0.4632, LR=5.00e-03
+2025-05-30 20:18:34,209 - Epoch 40: Train Loss=0.4429, Train Acc=0.6018, Val Loss=0.4824, Val Acc=0.5625, Val F1=0.4480, LR=5.00e-03
+2025-05-30 20:19:25,097 - Epoch 41: Train Loss=0.4473, Train Acc=0.5970, Val Loss=0.4771, Val Acc=0.5669, Val F1=0.4344, LR=5.00e-03
+2025-05-30 20:20:17,053 - Epoch 42: Train Loss=0.4411, Train Acc=0.6020, Val Loss=0.4570, Val Acc=0.5860, Val F1=0.4594, LR=5.00e-03
+2025-05-30 20:21:31,894 - Epoch 43: Train Loss=0.4436, Train Acc=0.6003, Val Loss=0.4676, Val Acc=0.5749, Val F1=0.4454, LR=5.00e-03
+2025-05-30 20:22:41,973 - Epoch 44: Train Loss=0.4331, Train Acc=0.6102, Val Loss=0.4751, Val Acc=0.5709, Val F1=0.4448, LR=5.00e-03
+2025-05-30 20:23:35,545 - Epoch 45: Train Loss=0.4329, Train Acc=0.6102, Val Loss=0.4271, Val Acc=0.6139, Val F1=0.5019, LR=5.00e-03
+2025-05-30 20:24:41,344 - Epoch 46: Train Loss=0.4293, Train Acc=0.6134, Val Loss=0.4177, Val Acc=0.6179, Val F1=0.5081, LR=5.00e-03
+2025-05-30 20:25:46,120 - Epoch 47: Train Loss=0.4229, Train Acc=0.6191, Val Loss=0.4723, Val Acc=0.5691, Val F1=0.4807, LR=5.00e-03
+2025-05-30 20:27:10,840 - Epoch 48: Train Loss=0.4307, Train Acc=0.6120, Val Loss=0.4258, Val Acc=0.6095, Val F1=0.4912, LR=5.00e-03
+2025-05-30 20:28:05,975 - Epoch 49: Train Loss=0.4107, Train Acc=0.6305, Val Loss=0.5396, Val Acc=0.5120, Val F1=0.4014, LR=5.00e-03
+2025-05-30 20:28:59,280 - Epoch 50: Train Loss=0.4122, Train Acc=0.6304, Val Loss=0.4324, Val Acc=0.6073, Val F1=0.5005, LR=5.00e-03
+2025-05-30 20:29:58,515 - Epoch 51: Train Loss=0.4087, Train Acc=0.6332, Val Loss=0.4924, Val Acc=0.5567, Val F1=0.4233, LR=5.00e-03
+2025-05-30 20:30:51,081 - Epoch 52: Train Loss=0.4102, Train Acc=0.6302, Val Loss=0.4400, Val Acc=0.5975, Val F1=0.4936, LR=5.00e-03

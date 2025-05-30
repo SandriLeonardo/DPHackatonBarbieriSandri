@@ -180,9 +180,8 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
         u_values_global = torch.zeros(dataset_size, device=device, requires_grad=False)
         print(f"Initialized u_values for GCOD with size: {u_values_global.size()}")
 
-    # Calculate checkpoint intervals
-    num_checkpoints = 5
-    checkpoint_intervals = [int((i + 1) * epochs / num_checkpoints) for i in range(num_checkpoints)]
+    # Checkpoint saving frequency
+    checkpoint_every = 10
 
     for epoch in range(epochs):
         print(f"\nEpoch {epoch + 1}/{epochs}")
@@ -253,8 +252,8 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
                 print(f"Best {best_metric}: {best_val_score:.4f}")
                 break
 
-        # Save periodic checkpoints
-        if (epoch + 1) in checkpoint_intervals:
+        # Save periodic checkpoints every N epochs
+        if (epoch + 1) % checkpoint_every == 0:
             checkpoint_file = f"{checkpoint_path}_epoch_{epoch + 1}.pth"
             torch.save(model.state_dict(), checkpoint_file)
             print(f"Checkpoint saved at {checkpoint_file}")

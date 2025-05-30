@@ -46,6 +46,26 @@ def get_model_defaults(model_type):
             'learning_rate': 5e-3,
             'patience': 25,
             'scheduler': 'plateau',
+            'gce_q': 0.5,
+            'loss_type': 'gce',
+            'best_metric': 'f1'
+        }
+    elif model_type == "gce_model_B":
+        return {
+            'num_layer': 3,
+            'emb_dim': 128,
+            'drop_ratio': 0.5,
+            'virtual_node': True,
+            'residual': True,
+            'JK': 'last',
+            'graph_pooling': 'mean',
+            'edge_drop_ratio': 0.2,
+            'batch_norm': True,
+            'batch_size': 64,
+            'epochs': 300,
+            'learning_rate': 1e-3,
+            'patience': 30,
+            'scheduler': 'plateau',
             'gce_q': 0.9,
             'loss_type': 'gce',
             'best_metric': 'f1'
