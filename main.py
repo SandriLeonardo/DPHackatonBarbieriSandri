@@ -8,7 +8,7 @@ from torch_geometric.loader import DataLoader
 from source.models import GNN
 from source.losses import get_loss_function
 from source.training import train_model, evaluate_model
-from source.data_utils import load_dataset, add_zeros, add_original_indices
+from source.data_utils import load_dataset, load_test_dataset, add_zeros, add_original_indices
 from source.utils import set_seed, setup_logging
 from sklearn.model_selection import train_test_split
 
@@ -83,20 +83,15 @@ def get_model_defaults(model_type):
             'batch_norm': True,
             'batch_size': 64,
             'epochs': 250,
-            'initial_lr' : 5e-3,
-            'early_stopping': True,  # Enable/disable early stopping
+            'learning_rate': 5e-3,
             'patience': 25,
-            'gcod_lambda_p': 5.0,    # Weight for prediction penalty in GCOD
-            'gcod_lambda_r': 0.5,    # Weight for u regularization in GCOD
-            'gcod_T_u': 15,           # Number of optimization iterations for u in GCOD
-            'gcod_lr_u': 0.1,       # Learning rate for optimizing u in GCOD
-            'use_scheduler' : True,
-            'scheduler_type': 'plateau',  # Options: 'StepLR', 'ReduceLROnPlateau', 'CosineAnnealingLR', 'ExponentialLR', 'OneCycleLR'
-            'step_size': 30,      # Period of learning rate decay for StepLR
-            'gamma': 0.5,         # Multiplicative factor of learning rate decay
-            'patience_lr': 10,    # Number of epochs with no improvement after which LR will be reduced
-            'factor': 0.5,        # Factor by which the learning rate will be reduced
-            'min_lr': 1e-7,
+            'scheduler': 'plateau',
+            'gce_q': 0.9,
+            'loss_type': 'gcod_c',
+            'gcod_lambda_p': 5.0,
+            'gcod_lambda_r': 0.5,
+            'gcod_T_u': 15,
+            'gcod_lr_u': 0.1,
             'best_metric': 'accuracy'
         }
     elif model_type == "gcod_model_D":
@@ -112,19 +107,15 @@ def get_model_defaults(model_type):
             'batch_norm': True,
             'batch_size': 64,
             'epochs': 250,
-            'initial_lr' : 5e-3,
-            'early_stopping': True,  # Enable/disable early stopping
+            'learning_rate': 5e-3,
             'patience': 25,
-            'gcod_lambda_p': 2.0,    # Weight for prediction penalty in GCOD
-            'gcod_T_u': 15,           # Number of optimization iterations for u in GCOD
-            'gcod_lr_u': 0.1,       # Learning rate for optimizing u in GCOD
-            'use_scheduler' : True,
-            'scheduler_type': 'plateau',  # Options: 'StepLR', 'ReduceLROnPlateau', 'CosineAnnealingLR', 'ExponentialLR', 'OneCycleLR'
-            'step_size': 30,      # Period of learning rate decay for StepLR
-            'gamma': 0.5,         # Multiplicative factor of learning rate decay
-            'patience_lr': 10,    # Number of epochs with no improvement after which LR will be reduced
-            'factor': 0.5,        # Factor by which the learning rate will be reduced
-            'min_lr': 1e-7,
+            'scheduler': 'plateau',
+            'gce_q': 0.9,
+            'loss_type': 'gcod_d',
+            'gcod_lambda_p': 2.0,
+            'gcod_lambda_r': 0.1,
+            'gcod_T_u': 15,
+            'gcod_lr_u': 0.1,
             'best_metric': 'accuracy'
         }
     else:
@@ -152,9 +143,10 @@ def split_dataset_indices(dataset, val_split=0.2, seed=777):
 
 
 def create_subset_loader(dataset, indices, batch_size, shuffle=False):
-    """Create DataLoader for a subset of the dataset"""
+    """Create DataLoader for a subset of the dataset with performance optimizations"""
     subset = torch.utils.data.Subset(dataset, indices)
-    return DataLoader(subset, batch_size=batch_size, shuffle=shuffle)
+    return DataLoader(subset, batch_size=batch_size, shuffle=shuffle,
+                     num_workers=2, persistent_workers=True, pin_memory=True)
 
 
 def main(args):
@@ -186,12 +178,14 @@ def main(args):
     # Setup logging
     setup_logging(args)
 
-    # Load test dataset (for final predictions only)
-    test_dataset = load_dataset(args.test_path, transform=add_zeros)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+    # Load test dataset (for final predictions only) - using load_test_dataset to suppress warnings
+    test_dataset = load_test_dataset(args.test_path, transform=add_zeros)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,
+                           num_workers=2, persistent_workers=True, pin_memory=True)
 
-    # Determine dataset folder name for output
-    test_dir_name = os.path.dirname(args.test_path).split(os.sep)[-1]
+    # Determine dataset folder name for output - fix path parsing
+    test_path_parts = args.test_path.replace('\\', '/').split('/')
+    test_dir_name = test_path_parts[-2] if len(test_path_parts) > 1 else 'default'
 
     # Model configuration from arguments
     model_config = {
@@ -221,6 +215,7 @@ def main(args):
         loss_kwargs['lambda_r'] = getattr(args, 'gcod_lambda_r', 0.5)
     elif args.loss_type == "gcod_d":
         loss_kwargs['alpha_train'] = getattr(args, 'gcod_lambda_p', 2.0)
+        loss_kwargs['lambda_r'] = getattr(args, 'gcod_lambda_r', 0.1)
 
     criterion = get_loss_function(args.loss_type, **loss_kwargs)
 
@@ -242,7 +237,7 @@ def main(args):
             print(f"Dataset split: {len(train_indices)} training, {len(val_indices)} validation samples")
 
             # Add original indices if using GCOD (must be done before creating subsets)
-            if args.loss_type == "gcod_c" or args.loss_type == "gcod_d":
+            if args.loss_type in ["gcod_c", "gcod_d"]:
                 full_train_dataset = add_original_indices(full_train_dataset)
 
             # Create train and validation loaders
@@ -276,7 +271,7 @@ def main(args):
 
             # Prepare GCOD arguments if needed
             gcod_args = None
-            if args.loss_type == "gcod_c" or args.loss_type == "gcod_d":
+            if args.loss_type in ["gcod_c", "gcod_d"]:
                 gcod_args = argparse.Namespace(
                     gcod_T_u=getattr(args, 'gcod_T_u', 15),
                     gcod_lr_u=getattr(args, 'gcod_lr_u', 0.1)
@@ -300,7 +295,7 @@ def main(args):
             )
 
             # Load best model for prediction
-            model.load_state_dict(torch.load(best_model_path, map_location=device))
+            model.load_state_dict(torch.load(best_model_path, map_location=device, weights_only=True))
             print(f"Loaded best model from: {best_model_path}")
 
         else:
@@ -309,7 +304,7 @@ def main(args):
             # Load pre-trained model
             checkpoint_path = f"checkpoints/model_{test_dir_name}_{args.model_type}_best.pth"
             if os.path.exists(checkpoint_path):
-                model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+                model.load_state_dict(torch.load(checkpoint_path, map_location=device, weights_only=True))
                 print(f"Loaded pre-trained model from: {checkpoint_path}")
             else:
                 print(f"Warning: No pre-trained model found at {checkpoint_path}")
@@ -347,9 +342,9 @@ if __name__ == "__main__":
                         help="Path to the training dataset (optional).")
 
     # Model selection with defaults
-    parser.add_argument("--model_type", type=str, default=None,
+    parser.add_argument("--model_type", type=str, default="gce_model",
                         choices=["gce_model", "gce_model_B", "gcod_model_C", "gcod_model_D"],
-                        help="Model configuration: 'gce_model' (default) or 'gcod_model'")
+                        help="Model configuration")
 
     # Loss function override (optional)
     parser.add_argument("--loss_type", type=str, default=None,
@@ -383,7 +378,7 @@ if __name__ == "__main__":
     parser.add_argument("--scheduler_gamma", type=float, default=0.5)
     parser.add_argument("--scheduler_patience", type=int, default=10)
 
-    # Best model criteria - FIXED: default=None and added "f1" to choices
+    # Best model criteria
     parser.add_argument("--best_metric", type=str, default=None,
                         choices=["accuracy", "loss", "f1"])
 

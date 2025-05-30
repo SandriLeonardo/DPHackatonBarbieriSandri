@@ -189,6 +189,15 @@ class GraphDataset(Dataset):
         return torch.stack(rws_list, dim=1) if rws_list else torch.zeros((num_nodes, k_max), device=edge_index.device)
 
 
+class TestGraphDataset(GraphDataset):
+    """GraphDataset for test data that suppresses label warnings"""
+    def get(self, idx):
+        if self.use_processed:
+            return torch.load(f"{self.processed_dir}/graph_{idx}.pt")
+        else:
+            return GraphDataset.dictToGraphObject(self.graphs_dicts[idx], is_test_set=True)
+
+
 class MultiDatasetLoader:
     """
     Enhanced data loader supporting multiple datasets with separate processing.
@@ -239,6 +248,14 @@ def load_dataset(filename, transform=None):
     else:
         # Load from JSON
         return GraphDataset(filename, transform=transform)
+
+
+def load_test_dataset(filename, transform=None):
+    """Load test dataset without label warnings"""
+    if filename.endswith('.pt'):
+        return torch.load(filename, weights_only=False)
+    else:
+        return TestGraphDataset(filename, transform=transform)
 
 
 def add_original_indices(dataset):
