@@ -180,7 +180,7 @@ def main(args):
     # Load test dataset (for final predictions only) - using load_test_dataset to suppress warnings
     test_dataset = load_test_dataset(args.test_path, transform=add_zeros)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,
-                           num_workers=2, persistent_workers=True, pin_memory=True)
+                             num_workers=2, persistent_workers=True, pin_memory=True)
 
     # Determine dataset folder name for output - fix path parsing
     test_path_parts = args.test_path.replace('\\', '/').split('/')
@@ -202,6 +202,20 @@ def main(args):
 
     # Initialize model
     model = GNN(**model_config).to(device)
+
+    # Force CUDA and enable optimizations
+    if torch.cuda.is_available():
+        model = model.cuda()
+        torch.backends.cudnn.benchmark = True
+
+        # Test GPU operations
+        test_tensor = torch.randn(10, 10).to(device)
+        print(f"Test tensor device: {test_tensor.device}")
+        print(f"Model parameters device: {next(model.parameters()).device}")
+
+        # Check memory
+        print(f"GPU memory allocated: {torch.cuda.memory_allocated(device) / 1024 ** 3:.2f}GB")
+        print(f"GPU memory cached: {torch.cuda.memory_reserved(device) / 1024 ** 3:.2f}GB")
 
     # Get loss function with parameters
     loss_kwargs = {'num_classes': 6}
