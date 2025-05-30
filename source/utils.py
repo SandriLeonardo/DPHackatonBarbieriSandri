@@ -1,3 +1,4 @@
+# Complete copy of utils.py functionality
 import torch
 import random
 import numpy as np
@@ -21,19 +22,11 @@ def set_seed(seed=777):
 def gzip_folder(folder_path, output_file):
     """
     Compresses an entire folder into a single .tar.gz file.
-
-    Args:
-        folder_path (str): Path to the folder to compress.
-        output_file (str): Path to the output .tar.gz file.
     """
     with tarfile.open(output_file, "w:gz") as tar:
         tar.add(folder_path, arcname=os.path.basename(folder_path))
     print(f"Folder '{folder_path}' has been compressed into '{output_file}'")
 
-# Example usage
-# folder_path = "./testfolder/submission"            # Path to the folder you want to compress
-# output_file = "./testfolder/submission.gz"         # Output .gz file name
-# gzip_folder(folder_path, output_file)
 
 def setup_logging(args):
     """Setup logging configuration"""

@@ -2,10 +2,78 @@ import torch
 import os
 import logging
 from tqdm import tqdm
+from sklearn.metrics import f1_score
+from source.losses import GCODLoss
 
 
-def train_epoch(data_loader, model, optimizer, criterion, device):
-    """Train for one epoch"""
+def train_epoch_gcod(data_loader, model, optimizer, criterion, device, u_values_global, args):
+    """Train for one epoch with GCOD loss"""
+    model.train()
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for data in tqdm(data_loader, desc="Training (GCOD)", unit="batch"):
+        data = data.to(device)
+        optimizer.zero_grad()
+
+        output = model(data)
+
+        # GCOD specific logic
+        batch_indices = data.original_idx.to(device=device, dtype=torch.long)
+
+        # Handle u_values device placement
+        if u_values_global.device != device:
+            u_batch_cpu = u_values_global[batch_indices.cpu()].clone().detach()
+            u_batch = u_batch_cpu.to(device).requires_grad_(True)
+        else:
+            u_batch = u_values_global[batch_indices].clone().detach().requires_grad_(True)
+
+        output_for_u_optim = output.detach()
+
+        # Optimize u parameters
+        for _ in range(args.gcod_T_u):
+            if u_batch.grad is not None:
+                u_batch.grad.zero_()
+
+            L2_for_u = criterion.compute_L2(output_for_u_optim, data.y, u_batch)
+            L2_for_u.backward()
+
+            with torch.no_grad():
+                u_batch.data -= args.gcod_lr_u * u_batch.grad.data
+                u_batch.data.clamp_(0, 1)
+
+        u_batch_optimized = u_batch.detach()
+
+        # Calculate batch accuracy for L3 coefficient
+        pred_for_acc = output.argmax(dim=1)
+        batch_accuracy = (pred_for_acc == data.y).sum().item() / data.y.size(0) if data.y.size(0) > 0 else 0.0
+
+        # Get loss components
+        loss_components = criterion(output, data.y, u_batch_optimized, batch_accuracy)
+        actual_loss = loss_components[0]
+
+        # Update global u values
+        with torch.no_grad():
+            if u_values_global.device != device:
+                u_values_global[batch_indices.cpu()] = u_batch_optimized.cpu()
+            else:
+                u_values_global[batch_indices] = u_batch_optimized
+
+        actual_loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        total_loss += actual_loss.item()
+        pred = output.argmax(dim=1)
+        correct += (pred == data.y).sum().item()
+        total += data.y.size(0)
+
+    return total_loss / len(data_loader), correct / total
+
+
+def train_epoch_standard(data_loader, model, optimizer, criterion, device):
+    """Train for one epoch with standard losses (GCE, CE, Noisy CE)"""
     model.train()
     total_loss = 0
     correct = 0
@@ -24,6 +92,7 @@ def train_epoch(data_loader, model, optimizer, criterion, device):
 
         loss = criterion(output, data.y)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         total_loss += loss.item()
@@ -34,12 +103,14 @@ def train_epoch(data_loader, model, optimizer, criterion, device):
     return total_loss / len(data_loader), correct / total
 
 
-def evaluate_epoch(data_loader, model, criterion, device, calculate_accuracy=False):
+def evaluate_epoch(data_loader, model, criterion, device, calculate_accuracy=False, is_gcod=False,
+                   u_values_global=None):
     """Evaluate for one epoch"""
     model.eval()
     correct = 0
     total = 0
     predictions = []
+    true_labels = []
     total_loss = 0
 
     with torch.no_grad():
@@ -51,23 +122,40 @@ def evaluate_epoch(data_loader, model, criterion, device, calculate_accuracy=Fal
             if calculate_accuracy:
                 correct += (pred == data.y).sum().item()
                 total += data.y.size(0)
-                total_loss += criterion(output, data.y).item()
+                predictions.extend(pred.cpu().numpy())
+                true_labels.extend(data.y.cpu().numpy())
+
+                # Loss calculation
+                if is_gcod and isinstance(criterion, GCODLoss):
+                    # For GCOD evaluation, use L1 with u=0 as proxy
+                    u_eval_dummy = torch.zeros(data.y.size(0), device=device, dtype=torch.float)
+                    loss_value = criterion.compute_L1(output, data.y, u_eval_dummy)
+                else:
+                    loss_value = criterion(output, data.y)
+                total_loss += loss_value.item()
             else:
                 predictions.extend(pred.cpu().numpy())
 
     if calculate_accuracy:
-        accuracy = correct / total
-        return total_loss / len(data_loader), accuracy
+        accuracy = correct / total if total > 0 else 0.0
+        avg_loss = total_loss / len(data_loader) if len(data_loader) > 0 else 0.0
+        # Calculate F1 score
+        f1_macro = f1_score(true_labels, predictions, average='macro', zero_division=0)
+        return avg_loss, accuracy, f1_macro
     return predictions
 
 
 def train_model(model, train_loader, test_loader, optimizer, criterion, device,
                 epochs=200, checkpoint_path="checkpoints/model", patience=25,
-                scheduler=None, best_metric="accuracy"):
+                scheduler=None, best_metric="accuracy", loss_type="standard",
+                gcod_args=None):
     """
     Complete training loop with early stopping and checkpointing
     """
-    best_val_score = 0.0 if best_metric == "accuracy" else float('inf')
+    if best_metric == "loss":
+        best_val_score = float('inf')
+    else:
+        best_val_score = 0.0  # For accuracy and f1
     train_losses = []
     train_accuracies = []
     val_losses = []
@@ -83,7 +171,16 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
     print(f"Early stopping enabled with patience: {patience}")
     print(f"Best model criteria: {best_metric}")
 
-    # Calculate checkpoint intervals (save 5 checkpoints throughout training)
+    # Initialize u_values for GCOD
+    u_values_global = None
+    is_gcod = loss_type == "gcod"
+    if is_gcod and gcod_args:
+        # Assume train_loader dataset has original_idx attributes
+        dataset_size = len(train_loader.dataset)
+        u_values_global = torch.zeros(dataset_size, device=device, requires_grad=False)
+        print(f"Initialized u_values for GCOD with size: {u_values_global.size()}")
+
+    # Calculate checkpoint intervals
     num_checkpoints = 5
     checkpoint_intervals = [int((i + 1) * epochs / num_checkpoints) for i in range(num_checkpoints)]
 
@@ -92,25 +189,37 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
         print("-" * 30)
 
         # Training
-        train_loss, train_acc = train_epoch(train_loader, model, optimizer, criterion, device)
+        if is_gcod:
+            train_loss, train_acc = train_epoch_gcod(
+                train_loader, model, optimizer, criterion, device, u_values_global, gcod_args
+            )
+        else:
+            train_loss, train_acc = train_epoch_standard(
+                train_loader, model, optimizer, criterion, device
+            )
 
         # Validation
-        val_loss, val_acc = evaluate_epoch(test_loader, model, criterion, device, calculate_accuracy=True)
+        val_loss, val_acc, val_f1 = evaluate_epoch(
+            test_loader, model, criterion, device, calculate_accuracy=True,
+            is_gcod=is_gcod, u_values_global=u_values_global
+        )
 
         # Step scheduler
         if scheduler is not None:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 scheduler.step(val_acc)
+            elif isinstance(scheduler, torch.optim.lr_scheduler.OneCycleLR):
+                pass  # OneCycleLR steps per batch
             else:
                 scheduler.step()
 
         # Log results
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
-        print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, LR: {current_lr:.2e}")
+        print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val F1: {val_f1:.4f}, LR: {current_lr:.2e}")
 
         logging.info(f"Epoch {epoch + 1}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.4f}, "
-                     f"Val Loss={val_loss:.4f}, Val Acc={val_acc:.4f}, LR={current_lr:.2e}")
+                     f"Val Loss={val_loss:.4f}, Val Acc={val_acc:.4f}, Val F1={val_f1:.4f}, LR={current_lr:.2e}")
 
         # Store metrics
         train_losses.append(train_loss)
@@ -119,17 +228,18 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
         val_accuracies.append(val_acc)
 
         # Determine if this is the best model
-        current_score = val_acc if best_metric == "accuracy" else val_loss
-        is_best = False
-
-        if best_metric == "accuracy" and current_score > best_val_score:
-            is_best = True
-            best_val_score = current_score
-        elif best_metric == "loss" and current_score < best_val_score:
-            is_best = True
-            best_val_score = current_score
+        if best_metric == "f1":
+            current_score = val_f1
+            is_best = current_score > best_val_score
+        elif best_metric == "accuracy":
+            current_score = val_acc
+            is_best = current_score > best_val_score
+        else:  # loss
+            current_score = val_loss
+            is_best = current_score < best_val_score
 
         if is_best:
+            best_val_score = current_score
             torch.save(model.state_dict(), best_model_path)
             print(f"★ New best model saved! {best_metric.title()}: {current_score:.4f}")
             epochs_without_improvement = 0
@@ -154,9 +264,7 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
 
 
 def evaluate_model(data_loader, model, device):
-    """
-    Generate predictions using the model
-    """
+    """Generate predictions using the model"""
     model.eval()
     predictions = []
 

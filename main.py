@@ -2,12 +2,30 @@ import argparse
 import torch
 import os
 import pandas as pd
+import signal
+import sys
 from torch_geometric.loader import DataLoader
 from source.models import GNN
 from source.losses import get_loss_function
 from source.training import train_model, evaluate_model
-from source.data_utils import load_dataset, add_zeros
+from source.data_utils import load_dataset, add_zeros, add_original_indices
 from source.utils import set_seed, setup_logging
+from sklearn.model_selection import train_test_split
+
+
+def cleanup_cuda():
+    """Clean up CUDA memory"""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        print("CUDA memory cleared")
+
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C interrupt"""
+    print('\nKeyboard interrupt detected. Cleaning up...')
+    cleanup_cuda()
+    sys.exit(0)
 
 
 def get_model_defaults(model_type):
@@ -25,31 +43,37 @@ def get_model_defaults(model_type):
             'batch_norm': True,
             'batch_size': 64,
             'epochs': 200,
-            'learning_rate':5e-3,
+            'learning_rate': 5e-3,
             'patience': 25,
             'scheduler': 'plateau',
             'gce_q': 0.9,
-            'loss_type': 'gce'
+            'loss_type': 'gce',
+            'best_metric': 'f1'
         }
     elif model_type == "gcod_model":
         return {
             'num_layer': 3,
-            'emb_dim': 128,
-            'drop_ratio': 0.3,
+            'emb_dim': 218,
+            'drop_ratio': 0.7,
             'virtual_node': True,
             'residual': True,
             'JK': 'last',
             'graph_pooling': 'mean',
-            'edge_drop_ratio': 0.2,
+            'edge_drop_ratio': 0.1,
             'batch_norm': True,
-            'batch_size': 32,
-            'epochs': 200,
-            'learning_rate': 1e-4,
+            'batch_size': 64,
+            'epochs': 250,
+            'learning_rate': 5e-3,
             'patience': 25,
             'scheduler': 'plateau',
-            'loss_type': 'gcod'
+            'loss_type': 'gcod',
+            'gcod_lambda_p': 2.0,
+            'gcod_lambda_r': 0.1,
+            'gcod_T_u': 15,
+            'gcod_lr_u': 0.1,
+            'best_metric': 'accuracy'
         }
-    else:  # Default to gce_model
+    else:
         return get_model_defaults("gce_model")
 
 
@@ -57,30 +81,48 @@ def apply_model_defaults(args):
     """Apply model-specific defaults, but don't override user-specified values"""
     defaults = get_model_defaults(args.model_type)
 
-    # Only set defaults for arguments that weren't explicitly provided by user
     for key, default_value in defaults.items():
-        if hasattr(args, key) and getattr(args, key) is None:
+        if not hasattr(args, key) or getattr(args, key) is None:
             setattr(args, key, default_value)
-
-    # Set loss_type if not explicitly set
-    if not hasattr(args, 'loss_type') or args.loss_type is None:
-        args.loss_type = defaults['loss_type']
 
     return args
 
 
+def split_dataset_indices(dataset, val_split=0.2, seed=777):
+    """Split dataset indices for train/validation split"""
+    indices = list(range(len(dataset)))
+    train_indices, val_indices = train_test_split(
+        indices, test_size=val_split, random_state=seed, stratify=None
+    )
+    return train_indices, val_indices
+
+
+def create_subset_loader(dataset, indices, batch_size, shuffle=False):
+    """Create DataLoader for a subset of the dataset"""
+    subset = torch.utils.data.Subset(dataset, indices)
+    return DataLoader(subset, batch_size=batch_size, shuffle=shuffle)
+
+
 def main(args):
+    # Register signal handler for keyboard interrupt
+    signal.signal(signal.SIGINT, signal_handler)
+
     # Apply model-specific defaults
     args = apply_model_defaults(args)
 
     # Set random seed for reproducibility
     set_seed(args.seed)
 
-    # Setup device
+    # Setup device with detailed info
     device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"Using GPU: {torch.cuda.get_device_name(args.device)}")
+        print(f"GPU memory: {torch.cuda.get_device_properties(args.device).total_memory / 1e9:.1f}GB")
+    print(f"Device: {device}")
     print(f"Model type: {args.model_type}")
     print(f"Loss type: {args.loss_type}")
+    print(f"Best metric: {args.best_metric}")
 
     # Create necessary directories
     os.makedirs("checkpoints", exist_ok=True)
@@ -90,7 +132,7 @@ def main(args):
     # Setup logging
     setup_logging(args)
 
-    # Load test dataset
+    # Load test dataset (for final predictions only)
     test_dataset = load_dataset(args.test_path, transform=add_zeros)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
@@ -114,83 +156,129 @@ def main(args):
     # Initialize model
     model = GNN(**model_config).to(device)
 
-    # Get loss function based on loss type with parameters
-    loss_kwargs = {}
+    # Get loss function with parameters
+    loss_kwargs = {'num_classes': 6}
     if args.loss_type == "gce":
         loss_kwargs['q'] = args.gce_q
     elif args.loss_type == "noisy":
-        loss_kwargs['p_noisy'] = args.noise_prob
+        loss_kwargs['p_noisy'] = getattr(args, 'noise_prob', 0.2)
+    elif args.loss_type == "gcod":
+        loss_kwargs['alpha_train'] = getattr(args, 'gcod_lambda_p', 2.0)
+        loss_kwargs['lambda_r'] = getattr(args, 'gcod_lambda_r', 0.1)
 
     criterion = get_loss_function(args.loss_type, **loss_kwargs)
 
-    # Training mode
-    if args.train_path:
-        print("Training mode: Training model on provided dataset")
+    try:
+        # Training mode
+        if args.train_path:
+            print("Training mode: Training model on provided dataset")
 
-        # Load training dataset
-        train_dataset = load_dataset(args.train_path, transform=add_zeros)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+            # Load full training dataset
+            full_train_dataset = load_dataset(args.train_path, transform=add_zeros)
 
-        # Setup optimizer
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+            # Split training data into train/validation
+            train_indices, val_indices = split_dataset_indices(
+                full_train_dataset,
+                val_split=args.val_split,
+                seed=args.seed
+            )
 
-        # Setup scheduler if specified
-        scheduler = None
-        if args.scheduler == "step":
-            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.scheduler_step_size,
-                                                        gamma=args.scheduler_gamma)
-        elif args.scheduler == "cosine":
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-        elif args.scheduler == "plateau":
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=args.scheduler_gamma,
-                                                                   patience=args.scheduler_patience)
+            print(f"Dataset split: {len(train_indices)} training, {len(val_indices)} validation samples")
 
-        # Setup checkpoint path
-        checkpoint_path = f"checkpoints/model_{test_dir_name}"
+            # Add original indices if using GCOD (must be done before creating subsets)
+            if args.loss_type == "gcod":
+                full_train_dataset = add_original_indices(full_train_dataset)
 
-        # Train model
-        best_model_path = train_model(
-            model=model,
-            train_loader=train_loader,
-            test_loader=test_loader,  # Use as validation
-            optimizer=optimizer,
-            scheduler=scheduler,
-            criterion=criterion,
-            device=device,
-            epochs=args.epochs,
-            checkpoint_path=checkpoint_path,
-            patience=args.patience,
-            best_metric=args.best_metric
-        )
+            # Create train and validation loaders
+            train_loader = create_subset_loader(
+                full_train_dataset, train_indices, args.batch_size, shuffle=True
+            )
+            val_loader = create_subset_loader(
+                full_train_dataset, val_indices, args.batch_size, shuffle=False
+            )
 
-        # Load best model for prediction
-        model.load_state_dict(torch.load(best_model_path, map_location=device))
-        print(f"Loaded best model from: {best_model_path}")
+            # Setup optimizer
+            optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    else:
-        print("Inference mode: Using pre-trained model")
+            # Setup scheduler if specified
+            scheduler = None
+            if args.scheduler == "step":
+                scheduler = torch.optim.lr_scheduler.StepLR(
+                    optimizer, step_size=getattr(args, 'scheduler_step_size', 50),
+                    gamma=getattr(args, 'scheduler_gamma', 0.5)
+                )
+            elif args.scheduler == "cosine":
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+            elif args.scheduler == "plateau":
+                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer, mode='max', factor=getattr(args, 'scheduler_gamma', 0.5),
+                    patience=getattr(args, 'scheduler_patience', 10)
+                )
 
-        # Load pre-trained model
-        checkpoint_path = f"checkpoints/model_{test_dir_name}_best.pth"
-        if os.path.exists(checkpoint_path):
-            model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-            print(f"Loaded pre-trained model from: {checkpoint_path}")
+            # Setup checkpoint path
+            checkpoint_path = f"checkpoints/model_{test_dir_name}_{args.model_type}"
+
+            # Prepare GCOD arguments if needed
+            gcod_args = None
+            if args.loss_type == "gcod":
+                gcod_args = argparse.Namespace(
+                    gcod_T_u=getattr(args, 'gcod_T_u', 15),
+                    gcod_lr_u=getattr(args, 'gcod_lr_u', 0.1)
+                )
+
+            # Train model (now using proper val_loader instead of test_loader)
+            best_model_path = train_model(
+                model=model,
+                train_loader=train_loader,
+                test_loader=val_loader,  # This is now validation data, not test data
+                optimizer=optimizer,
+                scheduler=scheduler,
+                criterion=criterion,
+                device=device,
+                epochs=args.epochs,
+                checkpoint_path=checkpoint_path,
+                patience=args.patience,
+                best_metric=args.best_metric,  # This will now correctly use F1 for gce_model
+                loss_type=args.loss_type,
+                gcod_args=gcod_args
+            )
+
+            # Load best model for prediction
+            model.load_state_dict(torch.load(best_model_path, map_location=device))
+            print(f"Loaded best model from: {best_model_path}")
+
         else:
-            print(f"Warning: No pre-trained model found at {checkpoint_path}")
-            print("Using randomly initialized model")
+            print("Inference mode: Using pre-trained model")
 
-    # Generate predictions
-    predictions = evaluate_model(test_loader, model, device)
+            # Load pre-trained model
+            checkpoint_path = f"checkpoints/model_{test_dir_name}_{args.model_type}_best.pth"
+            if os.path.exists(checkpoint_path):
+                model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+                print(f"Loaded pre-trained model from: {checkpoint_path}")
+            else:
+                print(f"Warning: No pre-trained model found at {checkpoint_path}")
+                print("Using randomly initialized model")
 
-    # Save predictions to CSV
-    output_csv_path = f"submission/testset_{test_dir_name}.csv"
-    test_graph_ids = list(range(len(predictions)))
-    output_df = pd.DataFrame({
-        "GraphID": test_graph_ids,
-        "Class": predictions
-    })
-    output_df.to_csv(output_csv_path, index=False)
-    print(f"Test predictions saved to {output_csv_path}")
+        # Generate predictions on actual test set
+        predictions = evaluate_model(test_loader, model, device)
+
+        # Save predictions to CSV
+        output_csv_path = f"submission/testset_{test_dir_name}.csv"
+        test_graph_ids = list(range(len(predictions)))
+        output_df = pd.DataFrame({
+            "id": test_graph_ids,
+            "pred": predictions
+        })
+        output_df.to_csv(output_csv_path, index=False)
+        print(f"Test predictions saved to {output_csv_path}")
+
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user")
+        cleanup_cuda()
+        sys.exit(0)
+    finally:
+        # Always cleanup at the end
+        cleanup_cuda()
 
 
 if __name__ == "__main__":
@@ -212,68 +300,48 @@ if __name__ == "__main__":
                         choices=["gce", "gcod", "standard", "noisy"],
                         help="Override loss function (uses model_type default if not specified)")
 
-    # Model architecture parameters (defaults set by model_type)
-    parser.add_argument("--num_layer", type=int, default=None,
-                        help="Number of GNN layers")
-    parser.add_argument("--emb_dim", type=int, default=None,
-                        help="Embedding dimension")
-    parser.add_argument("--drop_ratio", type=float, default=None,
-                        help="Dropout ratio")
-    parser.add_argument("--virtual_node", type=bool, default=None,
-                        help="Use virtual node")
-    parser.add_argument("--residual", type=bool, default=None,
-                        help="Use residual connections")
-    parser.add_argument("--JK", type=str, default=None, choices=["last", "sum", "cat"],
-                        help="Jumping Knowledge type")
+    # Model architecture parameters
+    parser.add_argument("--num_layer", type=int, default=None)
+    parser.add_argument("--emb_dim", type=int, default=None)
+    parser.add_argument("--drop_ratio", type=float, default=None)
+    parser.add_argument("--virtual_node", type=bool, default=None)
+    parser.add_argument("--residual", type=bool, default=None)
+    parser.add_argument("--JK", type=str, default=None, choices=["last", "sum", "cat"])
     parser.add_argument("--graph_pooling", type=str, default=None,
-                        choices=["sum", "mean", "max", "attention", "set2set"],
-                        help="Graph pooling method")
-    parser.add_argument("--edge_drop_ratio", type=float, default=None,
-                        help="Edge dropout ratio")
-    parser.add_argument("--batch_norm", type=bool, default=None,
-                        help="Use batch normalization")
+                        choices=["sum", "mean", "max", "attention", "set2set"])
+    parser.add_argument("--edge_drop_ratio", type=float, default=None)
+    parser.add_argument("--batch_norm", type=bool, default=None)
 
-    # Training parameters (defaults set by model_type)
-    parser.add_argument("--batch_size", type=int, default=None,
-                        help="Batch size for training and testing")
-    parser.add_argument("--epochs", type=int, default=None,
-                        help="Number of training epochs")
-    parser.add_argument("--learning_rate", type=float, default=None,
-                        help="Learning rate")
-    parser.add_argument("--patience", type=int, default=None,
-                        help="Early stopping patience")
+    # Training parameters
+    parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--learning_rate", type=float, default=None)
+    parser.add_argument("--patience", type=int, default=None)
+    parser.add_argument("--val_split", type=float, default=0.2,
+                        help="Fraction of training data to use for validation (default: 0.2)")
 
     # Scheduler parameters
     parser.add_argument("--scheduler", type=str, default=None,
-                        choices=["step", "cosine", "plateau"],
-                        help="Learning rate scheduler type")
-    parser.add_argument("--scheduler_step_size", type=int, default=50,
-                        help="Step size for StepLR scheduler")
-    parser.add_argument("--scheduler_gamma", type=float, default=0.5,
-                        help="Decay factor for scheduler")
-    parser.add_argument("--scheduler_patience", type=int, default=10,
-                        help="Patience for ReduceLROnPlateau scheduler")
+                        choices=["step", "cosine", "plateau"])
+    parser.add_argument("--scheduler_step_size", type=int, default=50)
+    parser.add_argument("--scheduler_gamma", type=float, default=0.5)
+    parser.add_argument("--scheduler_patience", type=int, default=10)
 
-    # Best model criteria
-    parser.add_argument("--best_metric", type=str, default="accuracy",
-                        choices=["accuracy", "loss"],
-                        help="Metric to use for best model selection")
+    # Best model criteria - FIXED: default=None and added "f1" to choices
+    parser.add_argument("--best_metric", type=str, default=None,
+                        choices=["accuracy", "loss", "f1"])
 
     # Loss function parameters
-    parser.add_argument("--gce_q", type=float, default=0.5,
-                        help="q parameter for GCE loss")
-    parser.add_argument("--noise_prob", type=float, default=0.2,
-                        help="Noise probability for Noisy CE loss")
+    parser.add_argument("--gce_q", type=float, default=0.9)
+    parser.add_argument("--noise_prob", type=float, default=0.2)
+    parser.add_argument("--gcod_lambda_p", type=float, default=2.0)
+    parser.add_argument("--gcod_lambda_r", type=float, default=0.1)
+    parser.add_argument("--gcod_T_u", type=int, default=15)
+    parser.add_argument("--gcod_lr_u", type=float, default=0.1)
 
     # System parameters
-    parser.add_argument("--device", type=int, default=0,
-                        help="GPU device number")
-    parser.add_argument("--seed", type=int, default=777,
-                        help="Random seed")
-
-    # Checkpointing
-    parser.add_argument("--num_checkpoints", type=int, default=5,
-                        help="Number of checkpoints to save during training")
+    parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=777)
 
     args = parser.parse_args()
     main(args)
