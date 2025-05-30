@@ -286,7 +286,7 @@ def main(args):
             best_model_path = train_model(
                 model=model,
                 train_loader=train_loader,
-                test_loader=val_loader,  # This is now validation data, not test data
+                test_loader=val_loader,
                 optimizer=optimizer,
                 scheduler=scheduler,
                 criterion=criterion,
@@ -294,7 +294,7 @@ def main(args):
                 epochs=args.epochs,
                 checkpoint_path=checkpoint_path,
                 patience=args.patience,
-                best_metric=args.best_metric,  # This will now correctly use F1 for gce_model
+                best_metric=args.best_metric,
                 loss_type=args.loss_type,
                 gcod_args=gcod_args
             )
@@ -347,8 +347,8 @@ if __name__ == "__main__":
                         help="Path to the training dataset (optional).")
 
     # Model selection with defaults
-    parser.add_argument("--model_type", type=str, default="gce_model",
-                        choices=["gce_model", "gcod_model_C", "gcod_model_D"],
+    parser.add_argument("--model_type", type=str, default=None,
+                        choices=["gce_model", "gce_model_B", "gcod_model_C", "gcod_model_D"],
                         help="Model configuration: 'gce_model' (default) or 'gcod_model'")
 
     # Loss function override (optional)
