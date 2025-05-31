@@ -11,6 +11,8 @@ from source.training import train_model, evaluate_model
 from source.data_utils import load_dataset, load_test_dataset, add_zeros, add_original_indices
 from source.utils import set_seed, setup_logging
 from sklearn.model_selection import train_test_split
+import pathlib
+print("--- TOP OF MAIN.PY EXECUTING ---")
 
 
 def cleanup_cuda():
@@ -123,13 +125,57 @@ def get_model_defaults(model_type):
 
 
 def apply_model_defaults(args):
-    """Apply model-specific defaults, but don't override user-specified values"""
+    """Apply model-specific defaults, inferring model_type from path if not provided."""
+    print("--- ENTERING apply_model_defaults ---") # VERY FIRST LINE INSIDE THE FUNCTION
+    print(f"apply_model_defaults: Value of args.model_type ON ENTRY: '{args.model_type}' (Type: {type(args.model_type)})")
+
+    # 1. Infer model_type from path if not specified by the user
+    if args.model_type is None:
+        print("apply_model_defaults: model_type is None, attempting to infer from path...") # Changed print for clarity
+        path_for_inference = args.train_path if args.train_path else args.test_path
+
+        inferred_type_from_path = None
+        if path_for_inference:
+            try:
+                p = pathlib.Path(path_for_inference)
+                # For a path like "/data/C/train.json" or "data/C/train.json":
+                # p.parent is "/data/C" or "data/C"
+                # p.parent.name is "C"
+                dataset_key_folder = p.parent.name 
+
+                print(f"apply_model_defaults: Path for inference: '{path_for_inference}', Extracted key folder: '{dataset_key_folder}'") # DEBUG PRINT
+
+                if dataset_key_folder.upper() == "A":
+                    inferred_type_from_path = "gce_model"
+                elif dataset_key_folder.upper() == "B":
+                    inferred_type_from_path = "gce_model_B"
+                elif dataset_key_folder.upper() == "C":
+                    inferred_type_from_path = "gcod_model_C"
+                elif dataset_key_folder.upper() == "D":
+                    inferred_type_from_path = "gcod_model_D"
+                
+                if inferred_type_from_path:
+                    args.model_type = inferred_type_from_path
+                    print(f"apply_model_defaults: Inferred and set model_type to '{args.model_type}'")
+                else:
+                    print(f"apply_model_defaults: Could not infer a specific model_type (A/B/C/D) from key folder '{dataset_key_folder}'.")
+            except Exception as e:
+                print(f"apply_model_defaults: Error during model_type inference from path '{path_for_inference}': {e}")
+        else:
+            print("apply_model_defaults: Neither train_path nor test_path available for model_type inference.")
+
+    # 2. If model_type is still None (not specified by user, and inference also failed or no path was available for it), default it.
+    if args.model_type is None:
+        args.model_type = "gce_model" # Fallback default
+        print(f"apply_model_defaults: model_type remains unspecified or inference failed, defaulting to '{args.model_type}'.")
+        
+    # 3. Get defaults for the determined model_type
     defaults = get_model_defaults(args.model_type)
 
+    # 4. Apply these defaults IF the user hasn't provided an explicit value for a parameter
     for key, default_value in defaults.items():
-        if not hasattr(args, key) or getattr(args, key) is None:
+        if not hasattr(args, key) or getattr(args, key) is None: 
             setattr(args, key, default_value)
-
     return args
 
 
@@ -149,6 +195,7 @@ def create_subset_loader(dataset, indices, batch_size, shuffle=False):
 
 
 def main(args):
+    print("--- ENTERING main(args) ---") # VERY FIRST LINE INSIDE
     # Register signal handler for keyboard interrupt
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -355,7 +402,7 @@ if __name__ == "__main__":
                         help="Path to the training dataset (optional).")
 
     # Model selection with defaults
-    parser.add_argument("--model_type", type=str, default="gce_model",
+    parser.add_argument("--model_type", type=str, default=None,
                         choices=["gce_model", "gce_model_B", "gcod_model_C", "gcod_model_D"],
                         help="Model configuration")
 

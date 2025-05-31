@@ -1,0 +1,25 @@
+2025-05-31 12:20:19,283 - Starting training with model_type: gce_model
+2025-05-31 12:20:19,283 - Test path: data/C/test.json.gz
+2025-05-31 12:20:19,283 - Train path: data/C/train.json
+2025-05-31 12:27:22,437 - Starting training with model_type: gce_model
+2025-05-31 12:27:22,437 - Test path: data/C/test.json.gz
+2025-05-31 12:27:22,437 - Train path: data/C/train.json
+2025-05-31 12:31:23,639 - Starting training with model_type: gce_model
+2025-05-31 12:31:23,639 - Test path: data/C/test.json.gz
+2025-05-31 12:31:23,639 - Train path: data/C/train.json
+2025-05-31 12:33:55,466 - Starting training with model_type: gce_model
+2025-05-31 12:33:55,466 - Test path: data/C/test.json.gz
+2025-05-31 12:33:55,466 - Train path: data/C/train.json
+2025-05-31 12:34:26,404 - Starting training with model_type: gce_model
+2025-05-31 12:34:26,404 - Test path: data/C/test.json.gz
+2025-05-31 12:34:26,404 - Train path: data/C/train.json.gz
+2025-05-31 12:46:17,415 - Epoch 1: Train Loss=0.7180, Train Acc=0.3618, Val Loss=0.6284, Val Acc=0.4362, Val F1=0.1125, LR=5.00e-03
+2025-05-31 12:51:04,717 - Starting training with model_type: gce_model
+2025-05-31 12:51:04,717 - Test path: data/C/test.json.gz
+2025-05-31 12:51:04,717 - Train path: data/C/train.json.gz
+2025-05-31 12:55:23,509 - Starting training with model_type: gce_model
+2025-05-31 12:55:23,509 - Test path: data/C/test.json.gz
+2025-05-31 12:55:23,509 - Train path: data/C/train.json.gz
+2025-05-31 12:56:36,732 - Starting training with model_type: gce_model
+2025-05-31 12:56:36,732 - Test path: data/C/test.json.gz
+2025-05-31 12:56:36,732 - Train path: data/C/train.json.gz

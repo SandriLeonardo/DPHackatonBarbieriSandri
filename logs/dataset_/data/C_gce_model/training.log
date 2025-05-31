@@ -1,0 +1,3 @@
+2025-05-31 12:22:09,387 - Starting training with model_type: gce_model
+2025-05-31 12:22:09,387 - Test path: /data/C/test.json.gz
+2025-05-31 12:22:09,387 - Train path: /data/C/train.json

@@ -10,6 +10,7 @@ import os
 import numpy as np
 from tqdm import tqdm
 import gc
+import pathlib
 
 # RWSE Configuration
 RWSE_MAX_K = 16
@@ -40,14 +41,23 @@ class GraphDataset(Dataset):
 
     def _count_and_load_graphs(self):
         """Load and count graphs from JSON file with support for compressed files."""
-        print(f"Loading graphs from {self.raw}...")
+        
+        path_obj = pathlib.Path(self.raw) # Create a Path object
+
+        print(f"Loading graphs from {path_obj}...") # Modified print
         print("This may take a few minutes, please wait...")
 
-        if self.raw.endswith(".gz"):
-            with gzip.open(self.raw, "rt", encoding="utf-8") as f:
-                graphs_dicts = json.load(f)
+        if path_obj.name.endswith(".gz"): # Check suffix on the Path object's name
+            # pathlib's open doesn't directly integrate with gzip like this,
+            # so we might still need gzip.open but pass the string form of the path.
+            # For consistency, let's stick to os.normpath for now if gzip is involved.
+            # The issue is likely with the non-gzipped path.
+            normalized_raw_path = os.path.normpath(self.raw)
+            with gzip.open(normalized_raw_path, "rt", encoding="utf-8") as f:
+                 graphs_dicts = json.load(f)
         else:
-            with open(self.raw, "r", encoding="utf-8") as f:
+            # Here we can use pathlib's open
+            with path_obj.open("rt", encoding="utf-8") as f: # Use path_obj.open()
                 graphs_dicts = json.load(f)
 
         return len(graphs_dicts), graphs_dicts

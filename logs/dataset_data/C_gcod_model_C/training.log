@@ -1,0 +1,3 @@
+2025-05-31 13:01:19,601 - Starting training with model_type: gcod_model_C
+2025-05-31 13:01:19,601 - Test path: data/C/test.json.gz
+2025-05-31 13:01:19,601 - Train path: data/C/train.json.gz

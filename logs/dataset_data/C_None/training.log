@@ -1,0 +1,3 @@
+2025-05-31 12:59:04,811 - Starting training with model_type: None
+2025-05-31 12:59:04,816 - Test path: data/C/test.json.gz
+2025-05-31 12:59:04,816 - Train path: data/C/train.json.gz
