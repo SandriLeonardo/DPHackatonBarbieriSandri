@@ -4,6 +4,7 @@ import logging
 from tqdm import tqdm
 from sklearn.metrics import f1_score
 from source.losses import GCODLoss_C, GCODLoss_D
+from torch.cuda.amp import autocast, GradScaler
 
 
 def train_epoch_gcod(data_loader, model, optimizer, criterion, device, u_values_global, args):
@@ -13,8 +14,8 @@ def train_epoch_gcod(data_loader, model, optimizer, criterion, device, u_values_
     correct = 0
     total = 0
 
-    for data in tqdm(data_loader, desc="Training (GCOD)", unit="batch"):
-        data = data.to(device)
+    for data in data_loader:  # No tqdm for speed
+        data = data.to(device, non_blocking=True)
         optimizer.zero_grad()
 
         output = model(data)
@@ -72,60 +73,45 @@ def train_epoch_gcod(data_loader, model, optimizer, criterion, device, u_values_
     return total_loss / len(data_loader), correct / total
 
 
-def train_epoch_standard(data_loader, model, optimizer, criterion, device):
-    """Train for one epoch with standard losses (GCE, CE, Noisy CE)"""
+def train_epoch_standard(data_loader, model, optimizer, criterion, device, use_amp=True):
+    """Train for one epoch with standard losses - optimized for maximum GPU utilization"""
     model.train()
     total_loss = 0
     correct = 0
     total = 0
+    
+    # Initialize mixed precision scaler
+    scaler = GradScaler() if use_amp else None
 
-    for batch_idx, data in enumerate(tqdm(data_loader, desc="Training", unit="batch")):
-        data = data.to(device)
+    for data in data_loader:  # No tqdm or debug prints for maximum speed
+        data = data.to(device, non_blocking=True)
         
-        # Comprehensive device checking for first batch
-        if batch_idx == 0:
-            print("=== DEVICE DEBUGGING ===")
-            print(f"Model device: {next(model.parameters()).device}")
-            print(f"Data.x device: {data.x.device}")
-            print(f"Data.edge_index device: {data.edge_index.device}")
-            print(f"Data.edge_attr device: {data.edge_attr.device}")
-            print(f"Data.y device: {data.y.device}")
-            print(f"Data.batch device: {data.batch.device}")
-            if hasattr(data, 'rwse_pe'):
-                print(f"Data.rwse_pe device: {data.rwse_pe.device}")
-            
-            # Check if all tensors are actually on GPU
-            all_on_gpu = all([
-                data.x.is_cuda,
-                data.edge_index.is_cuda,
-                data.edge_attr.is_cuda,
-                data.y.is_cuda,
-                data.batch.is_cuda
-            ])
-            print(f"All main tensors on GPU: {all_on_gpu}")
-            
-            if hasattr(data, 'rwse_pe'):
-                print(f"RWSE on GPU: {data.rwse_pe.is_cuda}")
-        
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)  # Faster than zero_grad()
 
         try:
-            output = model(data)
-            
-            # Check output device
-            if batch_idx == 0:
-                print(f"Model output device: {output.device}")
-                print("========================")
+            if use_amp:
+                # Mixed precision forward pass
+                with autocast():
+                    output = model(data)
+                    loss = criterion(output, data.y)
+                
+                # Mixed precision backward pass
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # Regular forward pass
+                output = model(data)
+                loss = criterion(output, data.y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
                 
         except IndexError as e:
             print(f"Error in batch with {data.num_nodes} nodes, edge_max={data.edge_index.max()}")
-            print(f"Batch info: x.shape={data.x.shape}, edge_index.shape={data.edge_index.shape}")
             raise e
-
-        loss = criterion(output, data.y)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
 
         total_loss += loss.item()
         pred = output.argmax(dim=1)
@@ -136,8 +122,8 @@ def train_epoch_standard(data_loader, model, optimizer, criterion, device):
 
 
 def evaluate_epoch(data_loader, model, criterion, device, calculate_accuracy=False, is_gcod=False,
-                   u_values_global=None):
-    """Evaluate for one epoch"""
+                   u_values_global=None, use_amp=True):
+    """Evaluate for one epoch with mixed precision - optimized"""
     model.eval()
     correct = 0
     total = 0
@@ -146,9 +132,15 @@ def evaluate_epoch(data_loader, model, criterion, device, calculate_accuracy=Fal
     total_loss = 0
 
     with torch.no_grad():
-        for data in tqdm(data_loader, desc="Evaluating", unit="batch"):
-            data = data.to(device)
-            output = model(data)
+        for data in data_loader:  # No tqdm for speed
+            data = data.to(device, non_blocking=True)
+            
+            if use_amp:
+                with autocast():
+                    output = model(data)
+            else:
+                output = model(data)
+                
             pred = output.argmax(dim=1)
 
             if calculate_accuracy:
@@ -182,7 +174,7 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
                 scheduler=None, best_metric="accuracy", loss_type="standard",
                 gcod_args=None):
     """
-    Complete training loop with early stopping and checkpointing
+    Complete training loop optimized for maximum GPU utilization
     """
     if best_metric == "loss":
         best_val_score = float('inf')
@@ -205,7 +197,7 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
 
     # Initialize u_values for GCOD
     u_values_global = None
-    is_gcod = loss_type == "gcod"
+    is_gcod = loss_type in ["gcod_c", "gcod_d"]
     if is_gcod and gcod_args:
         # Assume train_loader dataset has original_idx attributes
         dataset_size = len(train_loader.dataset)
@@ -219,26 +211,33 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
         print(f"\nEpoch {epoch + 1}/{epochs}")
         print("-" * 30)
 
-        # Training
+        # Training with maximum GPU utilization
         if is_gcod:
             train_loss, train_acc = train_epoch_gcod(
                 train_loader, model, optimizer, criterion, device, u_values_global, gcod_args
             )
         else:
             train_loss, train_acc = train_epoch_standard(
-                train_loader, model, optimizer, criterion, device
+                train_loader, model, optimizer, criterion, device, use_amp=True
             )
 
-        # Validation
-        val_loss, val_acc, val_f1 = evaluate_epoch(
-            test_loader, model, criterion, device, calculate_accuracy=True,
-            is_gcod=is_gcod, u_values_global=u_values_global
-        )
+        # Validation every 3 epochs to reduce overhead
+        if epoch % 3 == 0 or epoch == epochs - 1:
+            val_loss, val_acc, val_f1 = evaluate_epoch(
+                test_loader, model, criterion, device, calculate_accuracy=True,
+                is_gcod=is_gcod, u_values_global=u_values_global, use_amp=True
+            )
+        else:
+            # Use previous validation metrics to reduce GPU interruption
+            val_loss = val_losses[-1] if val_losses else 0.0
+            val_acc = val_accuracies[-1] if val_accuracies else 0.0
+            val_f1 = 0.0
 
         # Step scheduler
         if scheduler is not None:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(val_acc)
+                if epoch % 3 == 0:  # Only step when we have new validation metrics
+                    scheduler.step(val_acc)
             elif isinstance(scheduler, torch.optim.lr_scheduler.OneCycleLR):
                 pass  # OneCycleLR steps per batch
             else:
@@ -247,10 +246,14 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
         # Log results
         current_lr = optimizer.param_groups[0]['lr']
         print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
-        print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val F1: {val_f1:.4f}, LR: {current_lr:.2e}")
+        if epoch % 3 == 0 or epoch == epochs - 1:
+            print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val F1: {val_f1:.4f}, LR: {current_lr:.2e}")
+        else:
+            print(f"Val Loss: {val_loss:.4f} (cached), Val Acc: {val_acc:.4f} (cached), LR: {current_lr:.2e}")
 
-        logging.info(f"Epoch {epoch + 1}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.4f}, "
-                     f"Val Loss={val_loss:.4f}, Val Acc={val_acc:.4f}, Val F1={val_f1:.4f}, LR={current_lr:.2e}")
+        if epoch % 3 == 0 or epoch == epochs - 1:  # Only log when we have new validation metrics
+            logging.info(f"Epoch {epoch + 1}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.4f}, "
+                         f"Val Loss={val_loss:.4f}, Val Acc={val_acc:.4f}, Val F1={val_f1:.4f}, LR={current_lr:.2e}")
 
         # Store metrics
         train_losses.append(train_loss)
@@ -258,31 +261,32 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
         val_losses.append(val_loss)
         val_accuracies.append(val_acc)
 
-        # Determine if this is the best model
-        if best_metric == "f1":
-            current_score = val_f1
-            is_best = current_score > best_val_score
-        elif best_metric == "accuracy":
-            current_score = val_acc
-            is_best = current_score > best_val_score
-        else:  # loss
-            current_score = val_loss
-            is_best = current_score < best_val_score
+        # Determine if this is the best model (only on validation epochs)
+        if epoch % 3 == 0 or epoch == epochs - 1:
+            if best_metric == "f1":
+                current_score = val_f1
+                is_best = current_score > best_val_score
+            elif best_metric == "accuracy":
+                current_score = val_acc
+                is_best = current_score > best_val_score
+            else:  # loss
+                current_score = val_loss
+                is_best = current_score < best_val_score
 
-        if is_best:
-            best_val_score = current_score
-            torch.save(model.state_dict(), best_model_path)
-            print(f"★ New best model saved! {best_metric.title()}: {current_score:.4f}")
-            epochs_without_improvement = 0
-        else:
-            epochs_without_improvement += 1
-            print(f"No improvement for {epochs_without_improvement} epoch(s)")
+            if is_best:
+                best_val_score = current_score
+                torch.save(model.state_dict(), best_model_path)
+                print(f"★ New best model saved! {best_metric.title()}: {current_score:.4f}")
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+                print(f"No improvement for {epochs_without_improvement} validation check(s)")
 
-            # Check if we should stop early
-            if epochs_without_improvement >= patience:
-                print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
-                print(f"Best {best_metric}: {best_val_score:.4f}")
-                break
+                # Check if we should stop early
+                if epochs_without_improvement >= patience // 3:  # Adjust patience for reduced validation frequency
+                    print(f"\nEarly stopping triggered! No improvement for {patience // 3} validation checks.")
+                    print(f"Best {best_metric}: {best_val_score:.4f}")
+                    break
 
         # Save periodic checkpoints every N epochs
         if (epoch + 1) % checkpoint_every == 0:
@@ -294,15 +298,22 @@ def train_model(model, train_loader, test_loader, optimizer, criterion, device,
     return best_model_path
 
 
-def evaluate_model(data_loader, model, device):
-    """Generate predictions using the model"""
+def evaluate_model(data_loader, model, device, show_progress=True):
+    """Generate predictions using the model with mixed precision"""
     model.eval()
     predictions = []
+    
+    # Show progress for final predictions
+    iterator = tqdm(data_loader, desc="Generating predictions", unit="batch") if show_progress else data_loader
 
     with torch.no_grad():
-        for data in tqdm(data_loader, desc="Generating predictions", unit="batch"):
-            data = data.to(device)
-            output = model(data)
+        for data in iterator:
+            data = data.to(device, non_blocking=True)
+            
+            # Use mixed precision for inference
+            with autocast():
+                output = model(data)
+            
             pred = output.argmax(dim=1)
             predictions.extend(pred.cpu().numpy())
 
