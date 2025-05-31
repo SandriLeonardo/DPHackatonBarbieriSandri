@@ -12,6 +12,10 @@ from source.data_utils import load_dataset, load_test_dataset, add_zeros, add_or
 from source.utils import set_seed, setup_logging
 from sklearn.model_selection import train_test_split
 
+# Disable torch.compile for Tesla P100 compatibility
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+
 
 def cleanup_cuda():
     """Clean up CUDA memory"""
@@ -212,21 +216,30 @@ def main(args):
         'batch_norm': args.batch_norm
     }
 
-    # Initialize model with aggressive GPU optimizations
+    # Initialize model with GPU optimizations (DISABLE torch.compile for Tesla P100)
     model = GNN(**model_config).to(device)
     
-    # Force CUDA and enable all optimizations
+    # Force CUDA and enable optimizations
     if torch.cuda.is_available():
         model = model.cuda()
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False  # Allow non-deterministic for speed
         
-        # Try to compile model (PyTorch 2.0+)
-        try:
-            model = torch.compile(model, mode='max-autotune')
-            print("Model compiled with torch.compile for optimization")
-        except:
-            print("torch.compile not available, using regular model")
+        # Get GPU info
+        gpu_name = torch.cuda.get_device_name(device)
+        gpu_cap = torch.cuda.get_device_capability(device)
+        print(f"GPU: {gpu_name}")
+        print(f"GPU compute capability: {gpu_cap[0]}.{gpu_cap[1]}")
+        
+        # DISABLE torch.compile completely for Tesla P100 and other old GPUs
+        if "Tesla P100" in gpu_name or gpu_cap[0] < 7:
+            print("Detected Tesla P100 or old GPU - torch.compile DISABLED")
+        else:
+            try:
+                model = torch.compile(model, mode='max-autotune')
+                print("Model compiled with torch.compile for optimization")
+            except Exception as e:
+                print(f"torch.compile failed: {e}, using regular model")
         
         print(f"GPU memory allocated: {torch.cuda.memory_allocated(device) / 1024**3:.2f}GB")
         print(f"GPU memory cached: {torch.cuda.memory_reserved(device) / 1024**3:.2f}GB")
