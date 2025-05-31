@@ -79,12 +79,44 @@ def train_epoch_standard(data_loader, model, optimizer, criterion, device):
     correct = 0
     total = 0
 
-    for data in tqdm(data_loader, desc="Training", unit="batch"):
+    for batch_idx, data in enumerate(tqdm(data_loader, desc="Training", unit="batch")):
         data = data.to(device)
+        
+        # Comprehensive device checking for first batch
+        if batch_idx == 0:
+            print("=== DEVICE DEBUGGING ===")
+            print(f"Model device: {next(model.parameters()).device}")
+            print(f"Data.x device: {data.x.device}")
+            print(f"Data.edge_index device: {data.edge_index.device}")
+            print(f"Data.edge_attr device: {data.edge_attr.device}")
+            print(f"Data.y device: {data.y.device}")
+            print(f"Data.batch device: {data.batch.device}")
+            if hasattr(data, 'rwse_pe'):
+                print(f"Data.rwse_pe device: {data.rwse_pe.device}")
+            
+            # Check if all tensors are actually on GPU
+            all_on_gpu = all([
+                data.x.is_cuda,
+                data.edge_index.is_cuda,
+                data.edge_attr.is_cuda,
+                data.y.is_cuda,
+                data.batch.is_cuda
+            ])
+            print(f"All main tensors on GPU: {all_on_gpu}")
+            
+            if hasattr(data, 'rwse_pe'):
+                print(f"RWSE on GPU: {data.rwse_pe.is_cuda}")
+        
         optimizer.zero_grad()
 
         try:
             output = model(data)
+            
+            # Check output device
+            if batch_idx == 0:
+                print(f"Model output device: {output.device}")
+                print("========================")
+                
         except IndexError as e:
             print(f"Error in batch with {data.num_nodes} nodes, edge_max={data.edge_index.max()}")
             print(f"Batch info: x.shape={data.x.shape}, edge_index.shape={data.edge_index.shape}")

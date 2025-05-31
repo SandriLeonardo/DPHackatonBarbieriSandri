@@ -11,8 +11,6 @@ from source.training import train_model, evaluate_model
 from source.data_utils import load_dataset, load_test_dataset, add_zeros, add_original_indices
 from source.utils import set_seed, setup_logging
 from sklearn.model_selection import train_test_split
-import pathlib
-print("--- TOP OF MAIN.PY EXECUTING ---")
 
 
 def cleanup_cuda():
@@ -43,7 +41,7 @@ def get_model_defaults(model_type):
             'graph_pooling': 'mean',
             'edge_drop_ratio': 0.15,
             'batch_norm': True,
-            'batch_size': 64,
+            'batch_size': 128,  # Increased from 64
             'epochs': 200,
             'learning_rate': 5e-3,
             'patience': 25,
@@ -63,7 +61,7 @@ def get_model_defaults(model_type):
             'graph_pooling': 'mean',
             'edge_drop_ratio': 0.2,
             'batch_norm': True,
-            'batch_size': 64,
+            'batch_size': 128,  # Increased from 64
             'epochs': 300,
             'learning_rate': 1e-3,
             'patience': 30,
@@ -83,7 +81,7 @@ def get_model_defaults(model_type):
             'graph_pooling': 'mean',
             'edge_drop_ratio': 0.3,
             'batch_norm': True,
-            'batch_size': 64,
+            'batch_size': 128,  # Increased from 64
             'epochs': 250,
             'learning_rate': 5e-3,
             'patience': 25,
@@ -107,7 +105,7 @@ def get_model_defaults(model_type):
             'graph_pooling': 'mean',
             'edge_drop_ratio': 0.3,
             'batch_norm': True,
-            'batch_size': 64,
+            'batch_size': 128,  # Increased from 64
             'epochs': 250,
             'learning_rate': 5e-3,
             'patience': 25,
@@ -125,57 +123,13 @@ def get_model_defaults(model_type):
 
 
 def apply_model_defaults(args):
-    """Apply model-specific defaults, inferring model_type from path if not provided."""
-    print("--- ENTERING apply_model_defaults ---") # VERY FIRST LINE INSIDE THE FUNCTION
-    print(f"apply_model_defaults: Value of args.model_type ON ENTRY: '{args.model_type}' (Type: {type(args.model_type)})")
-
-    # 1. Infer model_type from path if not specified by the user
-    if args.model_type is None:
-        print("apply_model_defaults: model_type is None, attempting to infer from path...") # Changed print for clarity
-        path_for_inference = args.train_path if args.train_path else args.test_path
-
-        inferred_type_from_path = None
-        if path_for_inference:
-            try:
-                p = pathlib.Path(path_for_inference)
-                # For a path like "/data/C/train.json" or "data/C/train.json":
-                # p.parent is "/data/C" or "data/C"
-                # p.parent.name is "C"
-                dataset_key_folder = p.parent.name 
-
-                print(f"apply_model_defaults: Path for inference: '{path_for_inference}', Extracted key folder: '{dataset_key_folder}'") # DEBUG PRINT
-
-                if dataset_key_folder.upper() == "A":
-                    inferred_type_from_path = "gce_model"
-                elif dataset_key_folder.upper() == "B":
-                    inferred_type_from_path = "gce_model_B"
-                elif dataset_key_folder.upper() == "C":
-                    inferred_type_from_path = "gcod_model_C"
-                elif dataset_key_folder.upper() == "D":
-                    inferred_type_from_path = "gcod_model_D"
-                
-                if inferred_type_from_path:
-                    args.model_type = inferred_type_from_path
-                    print(f"apply_model_defaults: Inferred and set model_type to '{args.model_type}'")
-                else:
-                    print(f"apply_model_defaults: Could not infer a specific model_type (A/B/C/D) from key folder '{dataset_key_folder}'.")
-            except Exception as e:
-                print(f"apply_model_defaults: Error during model_type inference from path '{path_for_inference}': {e}")
-        else:
-            print("apply_model_defaults: Neither train_path nor test_path available for model_type inference.")
-
-    # 2. If model_type is still None (not specified by user, and inference also failed or no path was available for it), default it.
-    if args.model_type is None:
-        args.model_type = "gce_model" # Fallback default
-        print(f"apply_model_defaults: model_type remains unspecified or inference failed, defaulting to '{args.model_type}'.")
-        
-    # 3. Get defaults for the determined model_type
+    """Apply model-specific defaults, but don't override user-specified values"""
     defaults = get_model_defaults(args.model_type)
 
-    # 4. Apply these defaults IF the user hasn't provided an explicit value for a parameter
     for key, default_value in defaults.items():
-        if not hasattr(args, key) or getattr(args, key) is None: 
+        if not hasattr(args, key) or getattr(args, key) is None:
             setattr(args, key, default_value)
+
     return args
 
 
@@ -186,16 +140,27 @@ def split_dataset_indices(dataset, val_split=0.2, seed=777):
         indices, test_size=val_split, random_state=seed, stratify=None
     )
     return train_indices, val_indices
+    """Split dataset indices for train/validation split"""
+    indices = list(range(len(dataset)))
+    train_indices, val_indices = train_test_split(
+        indices, test_size=val_split, random_state=seed, stratify=None
+    )
+    return train_indices, val_indices
 
 
 def create_subset_loader(dataset, indices, batch_size, shuffle=False):
-    """Create DataLoader for a subset of the dataset - Kaggle optimized"""
+    """Create DataLoader optimized for maximum GPU utilization"""
     subset = torch.utils.data.Subset(dataset, indices)
-    return DataLoader(subset, batch_size=batch_size, shuffle=shuffle, pin_memory=True)
+    return DataLoader(
+        subset, 
+        batch_size=batch_size, 
+        shuffle=shuffle, 
+        pin_memory=True,
+        drop_last=True  # Ensure consistent batch sizes
+    )
 
 
 def main(args):
-    print("--- ENTERING main(args) ---") # VERY FIRST LINE INSIDE
     # Register signal handler for keyboard interrupt
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -226,8 +191,8 @@ def main(args):
 
     # Load test dataset (for final predictions only) - using load_test_dataset to suppress warnings
     test_dataset = load_test_dataset(args.test_path, transform=add_zeros)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,
-                             num_workers=2, persistent_workers=True, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, 
+                           num_workers=2, persistent_workers=True, pin_memory=True)
 
     # Determine dataset folder name for output - fix path parsing
     test_path_parts = args.test_path.replace('\\', '/').split('/')
@@ -247,24 +212,26 @@ def main(args):
         'batch_norm': args.batch_norm
     }
 
-    # Initialize model
+    # Initialize model with aggressive GPU optimizations
     model = GNN(**model_config).to(device)
-
-    # Force CUDA and enable optimizations
+    
+    # Force CUDA and enable all optimizations
     if torch.cuda.is_available():
         model = model.cuda()
         torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False  # Allow non-deterministic for speed
+        
+        # Try to compile model (PyTorch 2.0+)
+        try:
+            model = torch.compile(model, mode='max-autotune')
+            print("Model compiled with torch.compile for optimization")
+        except:
+            print("torch.compile not available, using regular model")
+        
+        print(f"GPU memory allocated: {torch.cuda.memory_allocated(device) / 1024**3:.2f}GB")
+        print(f"GPU memory cached: {torch.cuda.memory_reserved(device) / 1024**3:.2f}GB")
 
-        # Test GPU operations
-        test_tensor = torch.randn(10, 10).to(device)
-        print(f"Test tensor device: {test_tensor.device}")
-        print(f"Model parameters device: {next(model.parameters()).device}")
-
-        # Check memory
-        print(f"GPU memory allocated: {torch.cuda.memory_allocated(device) / 1024 ** 3:.2f}GB")
-        print(f"GPU memory cached: {torch.cuda.memory_reserved(device) / 1024 ** 3:.2f}GB")
-
-    # Get loss function with parameters
+    # Get loss function with parameters - ensure it's on GPU if needed
     loss_kwargs = {'num_classes': 6}
     if args.loss_type == "gce":
         loss_kwargs['q'] = args.gce_q
@@ -278,6 +245,11 @@ def main(args):
         loss_kwargs['lambda_r'] = getattr(args, 'gcod_lambda_r', 0.1)
 
     criterion = get_loss_function(args.loss_type, **loss_kwargs)
+    
+    # Move criterion to GPU if it has parameters
+    if hasattr(criterion, 'parameters'):
+        criterion = criterion.to(device)
+        print(f"Loss function moved to device: {device}")
 
     try:
         # Training mode
@@ -402,7 +374,7 @@ if __name__ == "__main__":
                         help="Path to the training dataset (optional).")
 
     # Model selection with defaults
-    parser.add_argument("--model_type", type=str, default=None,
+    parser.add_argument("--model_type", type=str, default="gce_model",
                         choices=["gce_model", "gce_model_B", "gcod_model_C", "gcod_model_D"],
                         help="Model configuration")
 
