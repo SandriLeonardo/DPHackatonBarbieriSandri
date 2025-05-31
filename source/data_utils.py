@@ -10,7 +10,6 @@ import os
 import numpy as np
 from tqdm import tqdm
 import gc
-import pathlib
 
 # RWSE Configuration
 RWSE_MAX_K = 16
@@ -41,23 +40,14 @@ class GraphDataset(Dataset):
 
     def _count_and_load_graphs(self):
         """Load and count graphs from JSON file with support for compressed files."""
-        
-        path_obj = pathlib.Path(self.raw) # Create a Path object
-
-        print(f"Loading graphs from {path_obj}...") # Modified print
+        print(f"Loading graphs from {self.raw}...")
         print("This may take a few minutes, please wait...")
 
-        if path_obj.name.endswith(".gz"): # Check suffix on the Path object's name
-            # pathlib's open doesn't directly integrate with gzip like this,
-            # so we might still need gzip.open but pass the string form of the path.
-            # For consistency, let's stick to os.normpath for now if gzip is involved.
-            # The issue is likely with the non-gzipped path.
-            normalized_raw_path = os.path.normpath(self.raw)
-            with gzip.open(normalized_raw_path, "rt", encoding="utf-8") as f:
-                 graphs_dicts = json.load(f)
+        if self.raw.endswith(".gz"):
+            with gzip.open(self.raw, "rt", encoding="utf-8") as f:
+                graphs_dicts = json.load(f)
         else:
-            # Here we can use pathlib's open
-            with path_obj.open("rt", encoding="utf-8") as f: # Use path_obj.open()
+            with open(self.raw, "r", encoding="utf-8") as f:
                 graphs_dicts = json.load(f)
 
         return len(graphs_dicts), graphs_dicts
@@ -148,12 +138,20 @@ class GraphDataset(Dataset):
         # Create Data object
         data_obj = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, num_nodes=num_nodes)
 
-        # Add RWSE positional encoding
-        if data_obj.num_nodes > 0 and data_obj.num_edges > 0:
-            data_obj.rwse_pe = GraphDataset.get_rw_landing_probs(data_obj.edge_index, data_obj.num_nodes,
-                                                                 k_max=RWSE_MAX_K)
-        else:
-            data_obj.rwse_pe = torch.zeros((data_obj.num_nodes, RWSE_MAX_K))
+        # Simple RWSE for maximum speed - no complex computation
+        data_obj.rwse_pe = torch.zeros((data_obj.num_nodes, RWSE_MAX_K))
+        
+        # Debug: print once to confirm RWSE is disabled
+        if not hasattr(GraphDataset, '_rwse_debug_printed'):
+            print("RWSE computation disabled - using zeros for faster GPU utilization")
+            GraphDataset._rwse_debug_printed = True
+        
+        # Optional: Enable complex RWSE (slower but potentially better accuracy)
+        # if data_obj.num_nodes > 0 and data_obj.num_edges > 0:
+        #     data_obj.rwse_pe = GraphDataset.get_rw_landing_probs(data_obj.edge_index, data_obj.num_nodes,
+        #                                                          k_max=RWSE_MAX_K)
+        # else:
+        #     data_obj.rwse_pe = torch.zeros((data_obj.num_nodes, RWSE_MAX_K))
 
         return data_obj
 
@@ -162,41 +160,52 @@ class GraphDataset(Dataset):
         """
         Compute Random Walk Structural Encoding (RWSE) landing probabilities.
         """
+        device = edge_index.device  # Get device from input
+        
         if num_nodes == 0:
-            return torch.zeros((0, k_max), device=edge_index.device)
+            return torch.zeros((0, k_max), device=device)
         if edge_index.numel() == 0:
-            return torch.zeros((num_nodes, k_max), device=edge_index.device)
+            return torch.zeros((num_nodes, k_max), device=device)
 
         if num_nodes > 1000:
             print(f"Info: RWSE for graph with {num_nodes} nodes. This may be slow.")
 
         source, _ = edge_index[0], edge_index[1]
-        deg = degree(source, num_nodes=num_nodes, dtype=torch.float)
+        deg = degree(source, num_nodes=num_nodes, dtype=torch.float).to(device)
         deg_inv = deg.pow(-1.)
         deg_inv.masked_fill_(deg_inv == float('inf'), 0)
 
         try:
-            adj = to_dense_adj(edge_index, max_num_nodes=num_nodes).squeeze(0)
+            adj = to_dense_adj(edge_index, max_num_nodes=num_nodes).squeeze(0).to(device)
         except RuntimeError as e:
             max_idx = edge_index.max().item() if edge_index.numel() > 0 else -1
             print(f"Error in to_dense_adj: {e}. Max_idx: {max_idx}, Num_nodes: {num_nodes}. Returning zeros for RWSE.")
-            return torch.zeros((num_nodes, k_max), device=edge_index.device)
+            return torch.zeros((num_nodes, k_max), device=device)
 
         P_dense = deg_inv.view(-1, 1) * adj
         rws_list = []
-        Pk = torch.eye(num_nodes, device=edge_index.device)
+        Pk = torch.eye(num_nodes, device=device)
 
         for _ in range(1, k_max + 1):
             if Pk.numel() == 0 or P_dense.numel() == 0:
-                return torch.zeros((num_nodes, k_max), device=edge_index.device)
+                return torch.zeros((num_nodes, k_max), device=device)
             try:
                 Pk = Pk @ P_dense
             except RuntimeError as e:
                 print(f"RuntimeError during Pk @ P_dense: {e}. Returning zeros.")
-                return torch.zeros((num_nodes, k_max), device=edge_index.device)
+                return torch.zeros((num_nodes, k_max), device=device)
             rws_list.append(torch.diag(Pk))
 
-        return torch.stack(rws_list, dim=1) if rws_list else torch.zeros((num_nodes, k_max), device=edge_index.device)
+        return torch.stack(rws_list, dim=1) if rws_list else torch.zeros((num_nodes, k_max), device=device)
+
+
+class TestGraphDataset(GraphDataset):
+    """GraphDataset for test data that suppresses label warnings"""
+    def get(self, idx):
+        if self.use_processed:
+            return torch.load(f"{self.processed_dir}/graph_{idx}.pt")
+        else:
+            return GraphDataset.dictToGraphObject(self.graphs_dicts[idx], is_test_set=True)
 
 
 class TestGraphDataset(GraphDataset):
